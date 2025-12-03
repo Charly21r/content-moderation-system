@@ -2,3 +2,4 @@
 __pycache__/
 data/**/*.csv
 config/local_sensitive_words.json
+TODO.md
