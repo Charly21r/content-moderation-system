@@ -1,9 +1,15 @@
 from pathlib import Path
 import pandas as pd
+from sklearn.model_selection import train_test_split
 
 RAW_PATH = Path('data/raw/jigsaw/train.csv')
 OUT_DIR = Path('data/preprocessed/text')
 OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+RANDOM_STATE = 42
+TEST_SIZE = 0.2
+VAL_SIZE = 0.15
+
 
 def load_jigsaw() -> pd.DataFrame:
     df = pd.read_csv(RAW_PATH)
@@ -24,12 +30,42 @@ def map_to_policy_labels(df: pd.DataFrame) -> pd.DataFrame:
         columns={"comment_text": "text"}
     )
 
+def stratified_split(df: pd.DataFrame):
+    # Split stratifying by the toxicity label
+    train_val_df, test_df = train_test_split(
+        df,
+        test_size=TEST_SIZE,
+        stratify=df["toxicity"],
+        random_state=RANDOM_STATE
+    )
+
+    train_df, val_df = train_test_split(
+        train_val_df,
+        test_size=VAL_SIZE,
+        stratify=train_val_df["toxicity"],
+        random_state=RANDOM_STATE
+    )
+
+    # Print stats on hate label too
+    print("Train hate rate:", train_df["hate"].mean())
+    print("Val hate rate:", val_df["hate"].mean())
+    print("Test hate rate:", test_df["hate"].mean())
+
+    return train_df, val_df, test_df
+
 def main():
     df = load_jigsaw()
     df_unified = map_to_policy_labels(df)
-    out_path = OUT_DIR / "jigsaw_unified.csv"
-    df_unified.to_csv(out_path, index=False)
-    print(f"Saved unified jigsaw data to {out_path}")
+    df_train, df_val, df_test = stratified_split(df_unified)
+    
+    df_train.to_csv(OUT_DIR / "train.csv", index=False)
+    df_val.to_csv(OUT_DIR / "val.csv", index=False)
+    df_test.to_csv(OUT_DIR / "test.csv", index=False)
+
+    # Save the unified data to perform initial EDA
+    df_unified.to_csv(OUT_DIR / "jigsaw_unified.csv")
+    
+    print(f"Saved train, test, and val data to {OUT_DIR}")
 
 
 if __name__ == "__main__":
