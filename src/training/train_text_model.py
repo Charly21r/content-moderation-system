@@ -56,10 +56,12 @@ class JigsawDataset(Dataset):
         return item
 
 
-def train_one_epoch(model, dataloader, optimizer, device):
+def train_one_epoch(model, dataloader, optimizer, device, epoch: int, log_every: int = 50):
     model.train()
     total_loss = 0.0
-    for batch in tqdm(dataloader, desc="Training"):
+    global_step = epoch*len(dataloader)
+
+    for step, batch in enumerate(tqdm(dataloader, desc=f"Training epoch {epoch}")):
         batch = {k: v.to(device) for k, v in batch.items()}
         outputs = model(**batch)
         loss = outputs.loss
@@ -67,6 +69,11 @@ def train_one_epoch(model, dataloader, optimizer, device):
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
+
+        # log batch training loss every 'log_every' steps
+        if step % log_every == 0:
+            mlflow.log_metric("train_batch_loss", loss.item(), step=global_step+step)
+    
     return total_loss / len(dataloader)
 
 
