@@ -6,11 +6,17 @@ import pandas as pd
 import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, AutoConfig, AdamWeightDecay
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, AutoConfig
+from torch.optim import AdamW
 from sklearn.metrics import roc_auc_score, accuracy_score
 from tqdm import tqdm
+from dotenv import load_dotenv
 
-DATA_DIR = Path("data/preprocessed")
+load_dotenv()
+
+MLFLOW_URI = os.getenv("MLFLOW_TRACKING_URI")  # optional
+
+DATA_DIR = Path("data/preprocessed/text")
 MODEL_DIR = Path("models/text_toxicity/artifacts")
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -101,6 +107,7 @@ def eval_model(model, dataloader, device):
 
 def main():
     # MLflow setup
+    mlflow.set_tracking_uri(MLFLOW_URI)
     mlflow.set_experiment("text_toxicity_moderation")
 
     train_df = pd.read_csv(DATA_DIR / "train.csv")
@@ -127,7 +134,7 @@ def main():
         config=config,
     ).to(device)
 
-    optimizer = AdamWeightDecay(model.parameters(), lr=LR)
+    optimizer = AdamW(model.parameters(), lr=LR)
 
     with mlflow.start_run():
         mlflow.log_params(
