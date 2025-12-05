@@ -21,13 +21,14 @@ MODEL_DIR = Path("models/text_toxicity/artifacts")
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
 MODEL_NAME = "distilbert-base-uncased"
-LABEL_COLS = ["toxicity", "hate", "safe"]
+LABEL_COLS = ["toxicity", "hate"]   # safe can be derived from these at inference
 NUM_LABELS = len(LABEL_COLS)
 EPOCHS = 1
 BATCH_SIZE = 16
 LR = 2e-5
 MAX_LENGTH = 256
 
+SEED = 42   # to ensure reproducibility
 
 class JigsawDataset(Dataset):
     def __init__(self, df, tokenizer, max_length=MAX_LENGTH):
@@ -113,6 +114,12 @@ def eval_model(model, dataloader, device):
 
 
 def main():
+    # Set the seed
+    np.random.seed(SEED)
+    torch.manual_seed(SEED)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(SEED)
+    
     # MLflow setup
     mlflow.set_tracking_uri(MLFLOW_URI)
     mlflow.set_experiment("text_toxicity_moderation")
@@ -157,7 +164,7 @@ def main():
         )
 
         for epoch in range(EPOCHS):
-            train_loss = train_one_epoch(model, train_loader, optimizer, device)
+            train_loss = train_one_epoch(model, train_loader, optimizer, device, epoch)
             metrics = eval_model(model, val_loader, device)
             print(f"Epoch {epoch}: loss={train_loss:.4f}, metrics={metrics}")
 
