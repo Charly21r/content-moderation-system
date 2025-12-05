@@ -57,7 +57,18 @@ class JigsawDataset(Dataset):
         return item
 
 
-def train_one_epoch(model, dataloader, optimizer, device, epoch: int, log_every: int = 50):
+def calculate_pos_weights(df: pd.DataFrame, labels) -> torch.Tensor:
+    weights = []
+    for lab in labels:
+        pos = df[lab].sum()
+        neg = len(df) - pos
+        weight = neg / (pos + 1e-6)    # add the epsilon (1e-6) to avoid division by zero
+        weights.append(weight)
+    weights = torch.tensor(weights, dtype=torch.float32)
+    return weights
+
+
+def train_one_epoch(model, dataloader, criterion, optimizer, device, epoch: int, log_every: int = 50):
     model.train()
     total_loss = 0.0
     global_step = epoch*len(dataloader)
@@ -65,7 +76,7 @@ def train_one_epoch(model, dataloader, optimizer, device, epoch: int, log_every:
     for step, batch in enumerate(tqdm(dataloader, desc=f"Training epoch {epoch}")):
         batch = {k: v.to(device) for k, v in batch.items()}
         outputs = model(**batch)
-        loss = outputs.loss
+        loss = criterion(outputs.logits, batch['labels'])
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -124,8 +135,15 @@ def main():
     mlflow.set_tracking_uri(MLFLOW_URI)
     mlflow.set_experiment("text_toxicity_moderation")
 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Load data
     train_df = pd.read_csv(DATA_DIR / "train.csv")
     val_df = pd.read_csv(DATA_DIR / "val.csv")
+    
+    # Calculate the weights to handle imbalance and use them in the loss
+    pos_weights = calculate_pos_weights(train_df, LABEL_COLS).to(device)
+    criterion = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weights)
 
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 
@@ -134,8 +152,6 @@ def main():
 
     train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=BATCH_SIZE)
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     config = AutoConfig.from_pretrained(
         MODEL_NAME,
@@ -164,7 +180,7 @@ def main():
         )
 
         for epoch in range(EPOCHS):
-            train_loss = train_one_epoch(model, train_loader, optimizer, device, epoch)
+            train_loss = train_one_epoch(model, train_loader, criterion, optimizer, device, epoch)
             metrics = eval_model(model, val_loader, device)
             print(f"Epoch {epoch}: loss={train_loss:.4f}, metrics={metrics}")
 

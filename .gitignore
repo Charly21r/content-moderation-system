@@ -6,3 +6,4 @@ config/local_sensitive_words.json
 TODO.md
 mlruns/
 mlflow.db
+models/
