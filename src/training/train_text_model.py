@@ -181,7 +181,7 @@ def compute_metrics(
             pr_auc = float("nan")
         else:
             roc_auc = roc_auc_score(y_true, y_score)
-            precision, recall, _ = precision_recall_curve(y_true, y_pred)
+            precision, recall, _ = precision_recall_curve(y_true, y_score)
             pr_auc = auc(recall, precision)
         
         prec_val = precision_score(y_true, y_pred, zero_division='warn')
