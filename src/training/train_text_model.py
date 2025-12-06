@@ -1,7 +1,6 @@
 import os
 from pathlib import Path
 import mlflow
-import mlflow.pytorch
 import pandas as pd
 import numpy as np
 import torch
@@ -11,6 +10,7 @@ from torch.optim import AdamW
 from sklearn.metrics import roc_auc_score, accuracy_score, f1_score, precision_recall_curve, auc, precision_score, recall_score, confusion_matrix
 from tqdm import tqdm
 from dotenv import load_dotenv
+import json
 
 load_dotenv()
 
@@ -19,6 +19,7 @@ MLFLOW_URI = os.getenv("MLFLOW_TRACKING_URI")  # optional
 DATA_DIR = Path("data/preprocessed/text")
 MODEL_DIR = Path("models/text_toxicity/artifacts")
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
+THRESHOLDS_PATH = MODEL_DIR / "thresholds.json" # path for the calibrated thresholds for each label
 
 MODEL_NAME = "distilbert-base-uncased"
 LABEL_COLS = ["toxicity", "hate"]   # safe can be derived from these at inference
@@ -68,7 +69,48 @@ def calculate_pos_weights(df: pd.DataFrame, labels) -> torch.Tensor:
     return weights
 
 
-def train_one_epoch(model, dataloader, criterion, optimizer, device, epoch: int, log_every: int = 50):
+def find_optimal_thresholds(
+    all_labels: np.ndarray,
+    all_probs: np.ndarray,
+    search_space: np.ndarray | None = None
+) -> dict:
+    """ 
+        Calibrates the thresholds per label to maximize F1-score
+    """
+    if search_space is None:
+        search_space = np.linspace(0.01, 0.99, 99)
+
+    thresholds = {}
+
+    for i, label_name in enumerate(LABEL_COLS):
+        y_true = all_labels[:, i]
+        y_score = all_probs[:, i]
+
+        best_f1 = -1
+        best_t = 0.5
+
+        for t in search_space:
+            y_pred = (y_score >= t).astype(int)
+            f1 = f1_score(y_true, y_pred, zero_division='warn')
+
+            if f1 > best_f1:
+                best_f1 = f1
+                best_t = t
+        
+        thresholds[label_name] = best_t
+    
+    return thresholds
+
+
+def train_one_epoch(
+    model: AutoModelForSequenceClassification,
+    dataloader: DataLoader,
+    criterion: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    device: torch.device,
+    epoch: int,
+    log_every: int = 50
+):
     model.train()
     total_loss = 0.0
     global_step = epoch*len(dataloader)
@@ -89,7 +131,12 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device, epoch: int,
     return total_loss / len(dataloader)
 
 
-def eval_model(model, dataloader, device, epoch):
+def eval_model(
+    model: AutoModelForSequenceClassification,
+    dataloader: DataLoader,
+    device: torch.device,
+    epoch: int
+) -> tuple[np.ndarray, np.ndarray]:
     model.eval()
     all_labels=[]
     all_probs=[]
@@ -105,11 +152,28 @@ def eval_model(model, dataloader, device, epoch):
     all_labels = np.concatenate(all_labels, axis=0)
     all_probs = np.concatenate(all_probs, axis=0)
 
+    all_labels_arr = np.concatenate(all_labels, axis=0)
+    all_probs_arr = np.concatenate(all_probs, axis=0)
+    
+    # If 1D, reshape using NUM_LABELS
+    if all_labels_arr.ndim == 1:
+        all_labels_arr = all_labels_arr.reshape(-1, NUM_LABELS)
+    if all_probs_arr.ndim == 1:
+        all_probs_arr = all_probs_arr.reshape(-1, NUM_LABELS)
+
+    return all_labels_arr, all_probs_arr
+
+
+def compute_metrics(
+    all_labels: np.ndarray,
+    all_probs: np.ndarray,
+    thresholds: dict
+) -> dict:
     metrics = {}
     for i, label_name in enumerate(LABEL_COLS):
         y_true = all_labels[:, i]
         y_score = all_probs[:, i]
-        y_pred = (y_score >= 0.5).astype(int)
+        y_pred = (y_score >= thresholds[label_name]).astype(int)
 
         # Guard in case there are no positives in val for a label
         if len(np.unique(y_true)) == 1:
@@ -123,12 +187,12 @@ def eval_model(model, dataloader, device, epoch):
         prec_val = precision_score(y_true, y_pred, zero_division='warn')
         rec_val = recall_score(y_true, y_pred, zero_division='warn')
         f1_val = f1_score(y_true, y_pred, zero_division='warn')
+        acc = accuracy_score(y_true, y_pred)
 
         # Create a binary label confusion matrix for each label
-        cm = confusion_matrix(y_true, y_pred)
+        cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
         tn, fp, fn, tp = cm.ravel()
 
-        acc = accuracy_score(y_true, y_pred)
         metrics[f"{label_name}_roc_auc"] = roc_auc
         metrics[f"{label_name}_pr_auc"] = pr_auc
         metrics[f"{label_name}_precision"] = prec_val
@@ -198,24 +262,46 @@ def main():
             }
         )
 
+        # Start with 0.5 thresholds
+        thresholds = {lab: 0.5 for lab in LABEL_COLS}
+
         for epoch in range(EPOCHS):
             train_loss = train_one_epoch(model, train_loader, criterion, optimizer, device, epoch)
-            metrics = eval_model(model, val_loader, device, epoch)
-            print(f"Epoch {epoch}: loss={train_loss:.4f}, metrics={metrics}")
+            val_labels, val_probs = eval_model(model, val_loader, device, epoch)
+            val_metrics = compute_metrics(val_labels, val_probs, thresholds)
+
+            print(f"Epoch {epoch}: loss={train_loss:.4f}, val_metrics={val_metrics}")
 
             # log training loss and per-label metrics
             mlflow.log_metric("train_loss", train_loss, step=epoch)
-            for k, v in metrics.items():
+            for k, v in val_metrics.items():
                 mlflow.log_metric(k, v, step=epoch)
         
+        # Final calibration on validation set
+        val_labels, val_probs = eval_model(model, val_loader, device, epoch)
+        calibrated_thresholds = find_optimal_thresholds(val_labels, val_probs)
+
+        # Save thresholds JSON alongside the model
+        THRESHOLDS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with THRESHOLDS_PATH.open("w") as f:
+            json.dump(calibrated_thresholds, f)
+
+        # Log calibrated thresholds to MLflow
+        mlflow.log_params(
+            {f"threshold_{k}": v for k, v in calibrated_thresholds.items()}
+        )
+
         # Save model locally and to MLflow
         save_path = MODEL_DIR / "model"
+        save_path.mkdir(parents=True, exist_ok=True)
         model.save_pretrained(save_path)
         tokenizer.save_pretrained(save_path)
         print(f"Model and tokenizer saved to {save_path}")
 
         # Log the entire folder (weights + tokenizer + config) to MLflow
         mlflow.log_artifacts(str(save_path), artifact_path="full_model")
+        # Log the thresholds to MLflow
+        mlflow.log_artifact(str(THRESHOLDS_PATH), artifact_path="full_model")
 
 
 if __name__ == "__main__":
