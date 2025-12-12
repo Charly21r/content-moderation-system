@@ -11,6 +11,7 @@ from sklearn.metrics import roc_auc_score, accuracy_score, f1_score, precision_r
 from tqdm import tqdm
 from dotenv import load_dotenv
 import json
+from torch.amp import autocast, GradScaler
 
 load_dotenv()
 
@@ -30,6 +31,7 @@ EPOCHS = 1
 BATCH_SIZE = 16
 LR = 2e-5
 MAX_LENGTH = 256
+MIXED_PRECISION = True
 
 
 def load_lexical_groups(path: Path) -> list[str]:
@@ -139,6 +141,7 @@ def train_one_epoch(
     criterion: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
     device: torch.device,
+    grad_scaler: torch.amp.GradScaler,
     epoch: int,
     log_every: int = 50
 ):
@@ -150,11 +153,17 @@ def train_one_epoch(
         inputs = {
                 k: v.to(device) for k, v in batch.items() if k not in ["labels", "text"]
         }
-        outputs = model(**inputs)
-        loss = criterion(outputs.logits, batch['labels'])
+        labels = batch['labels'].to(device)
+        
+        # Using autocast for mixed precision
+        with autocast(device.type, dtype=torch.float16, enabled=MIXED_PRECISION):
+            outputs = model(**inputs)
+            loss = criterion(outputs.logits, labels)
+        
+        grad_scaler.scale(loss).backward()
+        grad_scaler.step(optimizer)
+        grad_scaler.update()
         optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
         total_loss += loss.item()
 
         # log batch training loss every 'log_every' steps
@@ -183,8 +192,11 @@ def eval_model(
             inputs = {
                 k: v.to(device) for k, v in batch.items() if k not in ["labels", "text"]
             }
-            outputs = model(**inputs)
-            logits = outputs.logits
+
+            # Using autocast for mixed precision
+            with autocast(device.type, dtype=torch.float16, enabled=MIXED_PRECISION):
+                outputs = model(**inputs)
+                logits = outputs.logits
             probs = torch.sigmoid(logits).cpu().numpy()
             all_labels.append(labels)
             all_probs.append(probs)
@@ -333,7 +345,7 @@ def main():
     mlflow.set_experiment("text_toxicity_moderation")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+    
     # Load data
     train_df = pd.read_csv(DATA_DIR / "train.csv")
     val_df = pd.read_csv(DATA_DIR / "val.csv")
@@ -362,6 +374,7 @@ def main():
     ).to(device)
 
     optimizer = AdamW(model.parameters(), lr=LR)
+    grad_scaler = GradScaler(device, enabled=MIXED_PRECISION)
 
     with mlflow.start_run():
         mlflow.log_params(
@@ -380,7 +393,7 @@ def main():
         thresholds = {lab: 0.5 for lab in LABEL_COLS}
 
         for epoch in range(EPOCHS):
-            train_loss = train_one_epoch(model, train_loader, criterion, optimizer, device, epoch)
+            train_loss = train_one_epoch(model, train_loader, criterion, optimizer, device, grad_scaler, epoch)
             val_labels, val_probs, val_texts = eval_model(model, val_loader, device, epoch)
             val_metrics = compute_metrics(val_labels, val_probs, val_texts, thresholds)
 
