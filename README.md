@@ -115,7 +115,7 @@ Which contains, for each group:
 - $\Delta$-metrics (e.g. $\Delta_{FPR}$ between group & non-group)
 
 
-## 3. CI Fairness Gate
+### 3. CI Fairness Gate
 ```
 tests/test_bias_constraints.py
 ```
