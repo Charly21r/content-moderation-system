@@ -33,18 +33,21 @@ def map_to_policy_labels(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 def stratified_split(df: pd.DataFrame):
+    # Create temporal new label for stratification
+    df["strat_tmp_column"] = df["toxicity"].astype(str) + df["hate"].astype(str)
+
     # Split stratifying by the toxicity label
     train_val_df, test_df = train_test_split(
         df,
         test_size=TEST_SIZE,
-        stratify=df["toxicity"],
+        stratify=df["strat_tmp_column"],
         random_state=RANDOM_STATE
     )
 
     train_df, val_df = train_test_split(
         train_val_df,
         test_size=VAL_SIZE,
-        stratify=train_val_df["toxicity"],
+        stratify=train_val_df["strat_tmp_column"],
         random_state=RANDOM_STATE
     )
 
@@ -52,6 +55,11 @@ def stratified_split(df: pd.DataFrame):
     print("Train hate rate:", train_df["hate"].mean())
     print("Val hate rate:", val_df["hate"].mean())
     print("Test hate rate:", test_df["hate"].mean())
+    
+    # Drop the temporal column
+    train_df.drop(columns=["strat_tmp_column"], inplace=True)
+    val_df.drop(columns=["strat_tmp_column"], inplace=True)
+    test_df.drop(columns=["strat_tmp_column"], inplace=True)
 
     return train_df, val_df, test_df
 
