@@ -1,4 +1,4 @@
-import os
+import logging
 from pathlib import Path
 import mlflow
 import pandas as pd
@@ -9,42 +9,32 @@ from transformers import AutoTokenizer, AutoModelForSequenceClassification, Auto
 from torch.optim import AdamW
 from sklearn.metrics import roc_auc_score, accuracy_score, f1_score, precision_recall_curve, auc, precision_score, recall_score, confusion_matrix
 from tqdm import tqdm
-from dotenv import load_dotenv
 import json
 from torch.amp import autocast, GradScaler
 
-load_dotenv()
+from config import get_settings
+from utils.lexicon import load_group_terms
 
-MLFLOW_URI = os.getenv("MLFLOW_TRACKING_URI")  # optional
-SENSITIVE_CFG_PATH = Path("config/local_sensitive_words.json")
+logger = logging.getLogger(__name__)
 
-DATA_DIR = Path("data/preprocessed/text")
-MODEL_DIR = Path("models/text_toxicity/artifacts")
+_settings = get_settings()
+
+DATA_DIR = Path(_settings.data.preprocessed_dir)
+MODEL_DIR = Path(_settings.paths.model_dir)
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
-THRESHOLDS_PATH = MODEL_DIR / "thresholds.json" # path for the calibrated thresholds for each label
+THRESHOLDS_PATH = MODEL_DIR / "thresholds.json"
 
-SEED = 42   # to ensure reproducibility
-MODEL_NAME = "distilbert-base-uncased"
-LABEL_COLS = ["toxicity", "hate"]   # safe can be derived from these at inference
-NUM_LABELS = len(LABEL_COLS)
-EPOCHS = 1
-BATCH_SIZE = 16
-LR = 2e-5
-MAX_LENGTH = 256
-MIXED_PRECISION = True
+SEED = _settings.training.seed
+MODEL_NAME = _settings.model.name
+LABEL_COLS = _settings.model.label_cols
+NUM_LABELS = _settings.model.num_labels
+EPOCHS = _settings.training.epochs
+BATCH_SIZE = _settings.training.batch_size
+LR = _settings.training.learning_rate
+MAX_LENGTH = _settings.model.max_length
+MIXED_PRECISION = _settings.training.mixed_precision
 
-
-def load_lexical_groups(path: Path) -> list[str]:
-    if not path.exists():
-        print(f"Warning! Lexical Bias Groups not found at {path}")
-        return []
-    with open(SENSITIVE_CFG_PATH) as f:
-        sensitive_cfg = json.load(f)
-    groups = sensitive_cfg.get("groups", [])
-    return groups
-
-
-LEXICAL_GROUPS = load_lexical_groups(SENSITIVE_CFG_PATH)
+LEXICAL_GROUPS = load_group_terms(_settings.paths.sensitive_words_config)
 
 
 class JigsawDataset(Dataset):
@@ -72,7 +62,7 @@ class JigsawDataset(Dataset):
         # BCEWithLogitsLoss expects float targets for multi-label
         item["labels"] = torch.tensor(labels, dtype=torch.float32)
         item["text"] = text # raw text for lexical bias eval
-        
+
         return item
 
 
@@ -83,11 +73,11 @@ def build_group_masks(texts: list[str], keywords: list[str]) -> np.ndarray:
     kw_lower = [k.lower() for k in keywords]
     mask = []
 
-    
+
     for t in texts:
         t_low = t.lower()
         mask.append(any(kw in t_low for kw in kw_lower))
-    
+
     return np.array(mask, dtype=bool)
 
 
@@ -107,7 +97,7 @@ def find_optimal_thresholds(
     all_probs: np.ndarray,
     search_space: np.ndarray | None = None
 ) -> dict:
-    """ 
+    """
         Calibrates the thresholds per label to maximize F1-score
     """
     if search_space is None:
@@ -129,9 +119,9 @@ def find_optimal_thresholds(
             if f1 > best_f1:
                 best_f1 = f1
                 best_t = t
-        
+
         thresholds[label_name] = best_t
-    
+
     return thresholds
 
 
@@ -154,12 +144,12 @@ def train_one_epoch(
                 k: v.to(device) for k, v in batch.items() if k not in ["labels", "text"]
         }
         labels = batch['labels'].to(device)
-        
+
         # Using autocast for mixed precision
         with autocast(device.type, dtype=torch.float16, enabled=MIXED_PRECISION):
             outputs = model(**inputs)
             loss = criterion(outputs.logits, labels)
-        
+
         grad_scaler.scale(loss).backward()
         grad_scaler.step(optimizer)
         grad_scaler.update()
@@ -169,7 +159,7 @@ def train_one_epoch(
         # log batch training loss every 'log_every' steps
         if step % log_every == 0:
             mlflow.log_metric("train_batch_loss", loss.item(), step=global_step+step)
-    
+
     return total_loss / len(dataloader)
 
 
@@ -201,7 +191,7 @@ def eval_model(
             all_labels.append(labels)
             all_probs.append(probs)
             all_texts.extend(texts)
-    
+
     all_labels_arr = np.concatenate(all_labels, axis=0)
     all_probs_arr = np.concatenate(all_probs, axis=0)
 
@@ -245,7 +235,7 @@ def _compute_labelwise_metrics_slice(
             roc_auc = roc_auc_score(y_true, y_score)
             precision, recall, _ = precision_recall_curve(y_true, y_score)
             pr_auc = auc(recall, precision)
-        
+
         prec_val = precision_score(y_true, y_pred, zero_division='warn')
         rec_val = recall_score(y_true, y_pred, zero_division='warn')
         f1_val = f1_score(y_true, y_pred, zero_division='warn')
@@ -270,7 +260,7 @@ def _compute_labelwise_metrics_slice(
         metrics[f"{base}_TN"] = int(tn)
         metrics[f"{base}_FPR"] = float(fpr)
         metrics[f"{base}_FNR"] = float(fnr)
-    
+
     return metrics
 
 
@@ -294,7 +284,7 @@ def compute_metrics(
     # Lexical bias analysis metrics
     if not LEXICAL_GROUPS:
         return metrics
-    
+
     # Create mask for the texts that contain any of the words of the group
     mask = build_group_masks(all_texts, LEXICAL_GROUPS)
 
@@ -339,17 +329,17 @@ def main():
     torch.manual_seed(SEED)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(SEED)
-    
+
     # MLflow setup
-    mlflow.set_tracking_uri(MLFLOW_URI)
+    mlflow.set_tracking_uri(_settings.mlflow_tracking_uri)
     mlflow.set_experiment("text_toxicity_moderation")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
+
     # Load data
     train_df = pd.read_csv(DATA_DIR / "train.csv")
     val_df = pd.read_csv(DATA_DIR / "val.csv")
-    
+
     # Calculate the weights to handle imbalance and use them in the loss
     pos_weights = calculate_pos_weights(train_df, LABEL_COLS).to(device)
     criterion = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weights)
@@ -397,13 +387,13 @@ def main():
             val_labels, val_probs, val_texts = eval_model(model, val_loader, device, epoch)
             val_metrics = compute_metrics(val_labels, val_probs, val_texts, thresholds)
 
-            print(f"Epoch {epoch}: loss={train_loss:.4f}, val_metrics={val_metrics}")
+            logger.info("Epoch %d: loss=%.4f, val_metrics=%s", epoch, train_loss, val_metrics)
 
             # log training loss and per-label metrics
             mlflow.log_metric("train_loss", train_loss, step=epoch)
             for k, v in val_metrics.items():
                 mlflow.log_metric(k, v, step=epoch)
-        
+
         # Final calibration on validation set
         val_labels, val_probs, _ = eval_model(model, val_loader, device, epoch)
         calibrated_thresholds = find_optimal_thresholds(val_labels, val_probs)
@@ -423,7 +413,7 @@ def main():
         save_path.mkdir(parents=True, exist_ok=True)
         model.save_pretrained(save_path)
         tokenizer.save_pretrained(save_path)
-        print(f"Model and tokenizer saved to {save_path}")
+        logger.info("Model and tokenizer saved to %s", save_path)
 
         # Log the entire folder (weights + tokenizer + config) to MLflow
         mlflow.log_artifacts(str(save_path), artifact_path="full_model")
@@ -433,5 +423,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

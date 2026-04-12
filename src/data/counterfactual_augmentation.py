@@ -1,20 +1,9 @@
-import json
-from pathlib import Path
 import random
 import pandas as pd
 
-SENSITIVE_CFG_PATH = Path("config/local_sensitive_words.json")
+from utils.lexicon import load_counterfactual_swapping
 
-def load_lexical_groups(path: Path) -> list[str]:
-    if not path.exists():
-        print(f"Warning! Lexical Bias Groups not found at {path}")
-        return []
-    with open(SENSITIVE_CFG_PATH) as f:
-        sensitive_cfg = json.load(f)
-    groups = sensitive_cfg.get("counterfactual_swapping", [])
-    return groups
-
-LEXICAL_GROUPS = load_lexical_groups(SENSITIVE_CFG_PATH)
+LEXICAL_GROUPS = load_counterfactual_swapping()
 
 
 

@@ -74,6 +74,3 @@ def test_bias_constraints():
             + "\n".join(f"- {msg}" for msg in violations)
             + extra
         )
-
-
-test_bias_constraints()

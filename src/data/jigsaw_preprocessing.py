@@ -1,16 +1,22 @@
+import logging
 from pathlib import Path
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
+from config import get_settings
 from data.counterfactual_augmentation import augment_with_counterfactuals
 
-RAW_PATH = Path('data/raw/jigsaw/train.csv')
-OUT_DIR = Path('data/preprocessed/text')
+logger = logging.getLogger(__name__)
+
+_settings = get_settings()
+
+RAW_PATH = Path(_settings.data.raw_path)
+OUT_DIR = Path(_settings.data.preprocessed_dir)
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-RANDOM_STATE = 42
-TEST_SIZE = 0.2
-VAL_SIZE = 0.15
+RANDOM_STATE = _settings.training.seed
+TEST_SIZE = _settings.data.test_size
+VAL_SIZE = _settings.data.val_size
 
 
 def load_jigsaw() -> pd.DataFrame:
@@ -25,7 +31,7 @@ def map_to_policy_labels(df: pd.DataFrame) -> pd.DataFrame:
 
     df["toxicity"] = (df[toxicity_cols].sum(axis=1) > 0).astype(int)
     df["hate"] = (df[hate_cols].sum(axis=1) > 0).astype(int)
-    
+
     df["safe"] = ( (df["toxicity"] == 0) & (df["hate"] == 0) ).astype(int)
 
     return df[["comment_text", "toxicity", "hate", "safe"]].rename(
@@ -43,7 +49,7 @@ def stratified_split(df: pd.DataFrame):
         stratify=df["strat_tmp_column"],
         random_state=RANDOM_STATE
     )
-    
+
     train_df, val_df = train_test_split(
         train_val_df,
         test_size=VAL_SIZE / (1 - TEST_SIZE),
@@ -51,10 +57,9 @@ def stratified_split(df: pd.DataFrame):
         random_state=RANDOM_STATE
     )
 
-    # Print stats on hate label too
-    print("Train hate rate:", train_df["hate"].mean())
-    print("Val hate rate:", val_df["hate"].mean())
-    print("Test hate rate:", test_df["hate"].mean())
+    logger.info("Train hate rate: %.4f", train_df["hate"].mean())
+    logger.info("Val hate rate: %.4f", val_df["hate"].mean())
+    logger.info("Test hate rate: %.4f", test_df["hate"].mean())
 
     # Drop the temporal column
     train_df = train_df.drop(columns=["strat_tmp_column"])
@@ -82,8 +87,8 @@ def main():
 
     # Save the unified data to perform initial EDA
     df_unified.to_csv(OUT_DIR / "jigsaw_unified.csv")
-    
-    print(f"Saved train, test, and val data to {OUT_DIR}")
+
+    logger.info("Saved train, test, and val data to %s", OUT_DIR)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 import json
+import logging
 from pathlib import Path
 from typing import Dict, Tuple
 import numpy as np
@@ -7,25 +8,30 @@ import torch
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, AutoConfig
 
+from config import get_settings
 from training.train_text_model import (
     JigsawDataset,
-    NUM_LABELS,
-    MAX_LENGTH,
     compute_metrics
 )
 
+logger = logging.getLogger(__name__)
+
+_settings = get_settings()
+
 ROOT = Path(__file__).resolve().parents[1]
 
-DATA_TEMPLATED_PATH = ROOT / "data" / "bias_eval" / "templated_lexical_bias.csv"
-DATA_VAL_PATH = ROOT / "data" / "preprocessed" / "text" / "val.csv"
+DATA_TEMPLATED_PATH = ROOT / _settings.bias_eval.templated_data_path
+DATA_VAL_PATH = ROOT / _settings.data.preprocessed_dir / "val.csv"
 
-MODEL_DIR = ROOT / "models" / "text_toxicity" / "artifacts"
+MODEL_DIR = ROOT / _settings.paths.model_dir
 MODEL_PATH = MODEL_DIR / "model"
 THRESHOLDS_PATH = MODEL_DIR / "thresholds.json"
 REPORT_PATH = MODEL_DIR / "bias_report.json"
 
-MODEL_NAME = "distilbert-base-uncased"
-BATCH_SIZE = 32
+MODEL_NAME = _settings.model.name
+NUM_LABELS = _settings.model.num_labels
+MAX_LENGTH = _settings.model.max_length
+BATCH_SIZE = _settings.bias_eval.batch_size
 
 
 def load_thresholds(path: Path) -> Dict[str, float]:
@@ -149,7 +155,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model, tokenizer = load_model_and_tokenizer(device)
 
-    
+
     # Load data
     df_val = pd.read_csv(DATA_VAL_PATH)
     require_columns(df_val, ["text", "toxicity", "hate"], "val.csv")
@@ -201,7 +207,7 @@ def main():
 
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     REPORT_PATH.write_text(json.dumps(report, indent=2))
-    print(f"Wrote bias report to {REPORT_PATH}")
+    logger.info("Wrote bias report to %s", REPORT_PATH)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,29 @@
+# Training configuration for text toxicity model
+
+model:
+  name: "distilbert-base-uncased"
+  num_labels: 2
+  label_cols: ["toxicity", "hate"]
+  max_length: 256
+
+training:
+  epochs: 1
+  batch_size: 16
+  learning_rate: 2.0e-5
+  seed: 42
+  mixed_precision: true
+
+data:
+  raw_path: "data/raw/jigsaw/train.csv"
+  preprocessed_dir: "data/preprocessed/text"
+  test_size: 0.2
+  val_size: 0.15
+
+paths:
+  model_dir: "models/text_toxicity/artifacts"
+  sensitive_words_config: "config/local_sensitive_words.json"
+
+bias_eval:
+  templated_data_path: "data/bias_eval/templated_lexical_bias.csv"
+  batch_size: 32
+  max_fpr_delta: 0.05

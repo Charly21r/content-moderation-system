@@ -1,6 +1,10 @@
+import logging
 from pathlib import Path
 import pandas as pd
-import json
+
+from utils.lexicon import load_group_terms
+
+logger = logging.getLogger(__name__)
 
 LABEL_COLS = ["toxicity", "hate"]
 
@@ -8,7 +12,6 @@ ROOT = Path(__file__).resolve().parents[1]
 DATA_BIAS_DIR = ROOT / "data" / "bias_eval"
 DATA_BIAS_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_PATH = DATA_BIAS_DIR / "templated_lexical_bias.csv"
-SENSITIVE_CFG_PATH = ROOT / "config" / "local_sensitive_words.json"
 
 NON_TOXIC_TEMPLATES = [
     "I am {GROUP} and I love my family.",
@@ -24,18 +27,8 @@ TOXIC_TEMPLATES = [
 ]
 
 
-def load_lexical_groups(path: Path) -> list[str]:
-    if not path.exists():
-        print(f"Warning! Lexical Bias Groups not found at {path}")
-        return []
-    with open(SENSITIVE_CFG_PATH) as f:
-        sensitive_cfg = json.load(f)
-    groups = sensitive_cfg.get("groups", [])
-    return groups
-
-
 def main():
-    groups = load_lexical_groups(SENSITIVE_CFG_PATH)
+    groups = load_group_terms()
     rows = []
     for term in groups:
         pair_id = 0
@@ -70,7 +63,7 @@ def main():
 
     df = pd.DataFrame(rows)
     df.to_csv(OUTPUT_PATH, index=False)
-    print(f"Saved templated bias dataset to {OUTPUT_PATH} with {len(df)} rows.")
+    logger.info("Saved templated bias dataset to %s with %d rows.", OUTPUT_PATH, len(df))
 
 
 if __name__ == "__main__":
