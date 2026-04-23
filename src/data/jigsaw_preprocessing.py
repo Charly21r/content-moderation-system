@@ -3,8 +3,8 @@ from pathlib import Path
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
-from config import get_settings
-from data.counterfactual_augmentation import augment_with_counterfactuals
+from src.config import get_settings
+from src.data.counterfactual_augmentation import augment_with_counterfactuals
 
 logger = logging.getLogger(__name__)
 

@@ -10,3 +10,4 @@ mlflow.db
 models/
 *.egg-info/
 src/*.egg-info/
+.DS_Store

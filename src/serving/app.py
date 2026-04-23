@@ -1,13 +1,14 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from time import perf_counter
+import os
 
 from src.serving.model_manager import load_model, is_loaded, get_model_info, predict
 from src.serving.schemas import TextInput, ModerationResult
 
 @asynccontextmanager
 async def lifespan(app):
-    load_model(...)
+    load_model(os.getenv("MODEL_PATH", "models/text_toxicity/artifacts/model"))
     yield
     # Cleaning
 

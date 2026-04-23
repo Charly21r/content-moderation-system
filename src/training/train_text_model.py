@@ -12,8 +12,8 @@ from tqdm import tqdm
 import json
 from torch.amp import autocast, GradScaler
 
-from config import get_settings
-from utils.lexicon import load_group_terms
+from src.config import get_settings
+from src.utils.lexicon import load_group_terms
 
 logger = logging.getLogger(__name__)
 
@@ -337,8 +337,8 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Load data
-    train_df = pd.read_csv(DATA_DIR / "train.csv")
-    val_df = pd.read_csv(DATA_DIR / "val.csv")
+    train_df = pd.read_csv(DATA_DIR / "train.csv")[:10]
+    val_df = pd.read_csv(DATA_DIR / "val.csv")[:10]
 
     # Calculate the weights to handle imbalance and use them in the loss
     pos_weights = calculate_pos_weights(train_df, LABEL_COLS).to(device)

@@ -28,17 +28,18 @@ def load_model(model_path: str) -> None:
         print("Warning! The model and tokenizer are being loaded on the CPU.")
         device = "cpu"
     
-    # Load thresholds per label
-    thresholds_path = Path(_model_path) / "thresholds.json"
-    with open(thresholds_path) as f:
-        _thresholds = json.load(f)
-    
     # _label_cols = [_model.config.id2label[i] for i in range(_model.config.num_labels)]
     _tokenizer = AutoTokenizer.from_pretrained(model_path)
     _model = AutoModelForSequenceClassification.from_pretrained(model_path).to(device)
     _model.eval()
     _model_path = model_path
     _device = device
+
+    # Load thresholds per label
+    thresholds_path = Path(_model_path).parent / "thresholds.json"
+    with open(thresholds_path) as f:
+        _thresholds = json.load(f)
+    
     
 
 def is_loaded() -> bool:
@@ -81,6 +82,7 @@ def get_model_info() -> dict:
         "device": _device,
         "is_loaded": is_loaded(),
         "thesholds": _thresholds,
+        "label_cols": _label_cols,
     }
 
     return response

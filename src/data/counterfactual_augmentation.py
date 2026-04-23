@@ -1,7 +1,7 @@
 import random
 import pandas as pd
 
-from utils.lexicon import load_counterfactual_swapping
+from src.utils.lexicon import load_counterfactual_swapping
 
 LEXICAL_GROUPS = load_counterfactual_swapping()
 
