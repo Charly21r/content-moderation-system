@@ -6,13 +6,12 @@ Env vars use the prefix CMS_ (Content Moderation System), e.g.:
   CMS_TRAINING__BATCH_SIZE=32
 """
 
-from pathlib import Path
 from functools import lru_cache
+from pathlib import Path
 
 import yaml
 from pydantic import Field
 from pydantic_settings import BaseSettings
-
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _DEFAULT_CONFIG_PATH = _PROJECT_ROOT / "config" / "training.yaml"
@@ -67,7 +66,7 @@ class Settings(BaseSettings):
     paths: PathsConfig = Field(default_factory=PathsConfig)
     bias_eval: BiasEvalConfig = Field(default_factory=BiasEvalConfig)
 
-    mlflow_tracking_uri: str | None = None
+    mlflow_tracking_uri: str = "file:./mlruns"
 
 
 @lru_cache(maxsize=1)

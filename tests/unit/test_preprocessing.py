@@ -1,7 +1,5 @@
 """Unit tests for data preprocessing functions."""
 
-import pandas as pd
-import pytest
 
 from data.jigsaw_preprocessing import map_to_policy_labels, stratified_split
 

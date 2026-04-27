@@ -1,8 +1,8 @@
 import logging
 from pathlib import Path
+
 import pandas as pd
 from sklearn.model_selection import train_test_split
-
 from src.config import get_settings
 from src.data.counterfactual_augmentation import augment_with_counterfactuals
 
@@ -23,6 +23,7 @@ def load_jigsaw() -> pd.DataFrame:
     df = pd.read_csv(RAW_PATH)
     return df
 
+
 def map_to_policy_labels(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
@@ -32,11 +33,10 @@ def map_to_policy_labels(df: pd.DataFrame) -> pd.DataFrame:
     df["toxicity"] = (df[toxicity_cols].sum(axis=1) > 0).astype(int)
     df["hate"] = (df[hate_cols].sum(axis=1) > 0).astype(int)
 
-    df["safe"] = ( (df["toxicity"] == 0) & (df["hate"] == 0) ).astype(int)
+    df["safe"] = ((df["toxicity"] == 0) & (df["hate"] == 0)).astype(int)
 
-    return df[["comment_text", "toxicity", "hate", "safe"]].rename(
-        columns={"comment_text": "text"}
-    )
+    return df[["comment_text", "toxicity", "hate", "safe"]].rename(columns={"comment_text": "text"})
+
 
 def stratified_split(df: pd.DataFrame):
     # Create temporal new label for stratification
@@ -44,17 +44,14 @@ def stratified_split(df: pd.DataFrame):
 
     # Split stratifying by the toxicity label
     train_val_df, test_df = train_test_split(
-        df,
-        test_size=TEST_SIZE,
-        stratify=df["strat_tmp_column"],
-        random_state=RANDOM_STATE
+        df, test_size=TEST_SIZE, stratify=df["strat_tmp_column"], random_state=RANDOM_STATE
     )
 
     train_df, val_df = train_test_split(
         train_val_df,
         test_size=VAL_SIZE / (1 - TEST_SIZE),
         stratify=train_val_df["strat_tmp_column"],
-        random_state=RANDOM_STATE
+        random_state=RANDOM_STATE,
     )
 
     logger.info("Train hate rate: %.4f", train_df["hate"].mean())
@@ -68,17 +65,14 @@ def stratified_split(df: pd.DataFrame):
 
     return train_df, val_df, test_df
 
+
 def main():
     df = load_jigsaw()
     df_unified = map_to_policy_labels(df)
     df_train, df_val, df_test = stratified_split(df_unified)
 
     df_train = augment_with_counterfactuals(
-        df_train,
-        text_col="text",
-        max_augment_per_sample=1,
-        frac=0.7,
-        random_state=RANDOM_STATE
+        df_train, text_col="text", max_augment_per_sample=1, frac=0.7, random_state=RANDOM_STATE
     )
 
     df_train.to_csv(OUT_DIR / "train.csv", index=False)

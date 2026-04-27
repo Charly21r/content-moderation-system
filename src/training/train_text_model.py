@@ -1,16 +1,27 @@
-import logging
-from pathlib import Path
-import mlflow
-import pandas as pd
-import numpy as np
-import torch
-from torch.utils.data import Dataset, DataLoader
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, AutoConfig
-from torch.optim import AdamW
-from sklearn.metrics import roc_auc_score, accuracy_score, f1_score, precision_recall_curve, auc, precision_score, recall_score, confusion_matrix
-from tqdm import tqdm
 import json
-from torch.amp import autocast, GradScaler
+import logging
+from collections.abc import Sequence
+from pathlib import Path
+
+import mlflow
+import numpy as np
+import pandas as pd
+import torch
+from sklearn.metrics import (
+    accuracy_score,
+    auc,
+    confusion_matrix,
+    f1_score,
+    precision_recall_curve,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+)
+from torch.amp import GradScaler, autocast
+from torch.optim import AdamW
+from torch.utils.data import DataLoader, Dataset
+from tqdm import tqdm
+from transformers import AutoConfig, AutoModelForSequenceClassification, AutoTokenizer, PreTrainedModel
 
 from src.config import get_settings
 from src.utils.lexicon import load_group_terms
@@ -52,27 +63,25 @@ class JigsawDataset(Dataset):
         labels = self.labels[idx]
 
         enc = self.tokenizer(
-            text,
-            truncation = True,
-            padding="max_length",
-            max_length=self.max_length,
-            return_tensors="pt"
+            text, truncation=True, padding="max_length", max_length=self.max_length, return_tensors="pt"
         )
         item = {k: v.squeeze(0) for k, v in enc.items()}
         # BCEWithLogitsLoss expects float targets for multi-label
         item["labels"] = torch.tensor(labels, dtype=torch.float32)
-        item["text"] = text # raw text for lexical bias eval
+        item["text"] = text  # raw text for lexical bias eval
 
         return item
 
 
-def build_group_masks(texts: list[str], keywords: list[str]) -> np.ndarray:
+def build_group_masks(
+    texts: Sequence[str] | np.ndarray,
+    keywords: Sequence[str],
+) -> np.ndarray:
     """
-        True if any keyword appears in the text
+    True if any keyword appears in the text
     """
     kw_lower = [k.lower() for k in keywords]
     mask = []
-
 
     for t in texts:
         t_low = t.lower()
@@ -86,19 +95,17 @@ def calculate_pos_weights(df: pd.DataFrame, labels) -> torch.Tensor:
     for lab in labels:
         pos = df[lab].sum()
         neg = len(df) - pos
-        weight = neg / (pos + 1e-6)    # add the epsilon (1e-6) to avoid division by zero
+        weight = neg / (pos + 1e-6)  # add the epsilon (1e-6) to avoid division by zero
         weights.append(weight)
-    weights = torch.tensor(weights, dtype=torch.float32)
-    return weights
+
+    return torch.tensor(weights, dtype=torch.float32)
 
 
 def find_optimal_thresholds(
-    all_labels: np.ndarray,
-    all_probs: np.ndarray,
-    search_space: np.ndarray | None = None
+    all_labels: np.ndarray, all_probs: np.ndarray, search_space: np.ndarray | None = None
 ) -> dict:
     """
-        Calibrates the thresholds per label to maximize F1-score
+    Calibrates the thresholds per label to maximize F1-score
     """
     if search_space is None:
         search_space = np.linspace(0.01, 0.99, 99)
@@ -114,7 +121,7 @@ def find_optimal_thresholds(
 
         for t in search_space:
             y_pred = (y_score >= t).astype(int)
-            f1 = f1_score(y_true, y_pred, zero_division='warn')
+            f1 = f1_score(y_true, y_pred, zero_division="warn")
 
             if f1 > best_f1:
                 best_f1 = f1
@@ -126,24 +133,22 @@ def find_optimal_thresholds(
 
 
 def train_one_epoch(
-    model: AutoModelForSequenceClassification,
+    model: PreTrainedModel,
     dataloader: DataLoader,
     criterion: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
     device: torch.device,
     grad_scaler: torch.amp.GradScaler,
     epoch: int,
-    log_every: int = 50
+    log_every: int = 50,
 ):
     model.train()
     total_loss = 0.0
-    global_step = epoch*len(dataloader)
+    global_step = epoch * len(dataloader)
 
     for step, batch in enumerate(tqdm(dataloader, desc=f"Training epoch {epoch}")):
-        inputs = {
-                k: v.to(device) for k, v in batch.items() if k not in ["labels", "text"]
-        }
-        labels = batch['labels'].to(device)
+        inputs = {k: v.to(device) for k, v in batch.items() if k not in ["labels", "text"]}
+        labels = batch["labels"].to(device)
 
         # Using autocast for mixed precision
         with autocast(device.type, dtype=torch.float16, enabled=MIXED_PRECISION):
@@ -158,30 +163,25 @@ def train_one_epoch(
 
         # log batch training loss every 'log_every' steps
         if step % log_every == 0:
-            mlflow.log_metric("train_batch_loss", loss.item(), step=global_step+step)
+            mlflow.log_metric("train_batch_loss", loss.item(), step=global_step + step)
 
     return total_loss / len(dataloader)
 
 
 def eval_model(
-    model: AutoModelForSequenceClassification,
-    dataloader: DataLoader,
-    device: torch.device,
-    epoch: int
+    model: PreTrainedModel, dataloader: DataLoader, device: torch.device, epoch: int
 ) -> tuple[np.ndarray, np.ndarray, list[str]]:
     model.eval()
-    all_labels=[]
-    all_probs=[]
-    all_texts=[]
+    all_labels = []
+    all_probs = []
+    all_texts = []
 
     with torch.no_grad():
         for batch in tqdm(dataloader, desc=f"Val Epoch {epoch}"):
             labels = batch["labels"].cpu().numpy()
             texts = batch["text"]
             # Remove labels and text for the inputs
-            inputs = {
-                k: v.to(device) for k, v in batch.items() if k not in ["labels", "text"]
-            }
+            inputs = {k: v.to(device) for k, v in batch.items() if k not in ["labels", "text"]}
 
             # Using autocast for mixed precision
             with autocast(device.type, dtype=torch.float16, enabled=MIXED_PRECISION):
@@ -204,16 +204,11 @@ def eval_model(
     return all_labels_arr, all_probs_arr, all_texts
 
 
-def _compute_labelwise_metrics_slice(
-    labels: np.ndarray,
-    probs: np.ndarray,
-    thresholds: dict,
-    prefix: str
-) -> dict:
+def _compute_labelwise_metrics_slice(labels: np.ndarray, probs: np.ndarray, thresholds: dict, prefix: str) -> dict:
     """
-        Compute all per-label metrics.
+    Compute all per-label metrics.
     """
-    metrics = {}
+    metrics: dict[str, float | int] = {}
 
     num_samples = int(labels.shape[0])
     metrics[f"{prefix}num_samples"] = num_samples
@@ -236,9 +231,9 @@ def _compute_labelwise_metrics_slice(
             precision, recall, _ = precision_recall_curve(y_true, y_score)
             pr_auc = auc(recall, precision)
 
-        prec_val = precision_score(y_true, y_pred, zero_division='warn')
-        rec_val = recall_score(y_true, y_pred, zero_division='warn')
-        f1_val = f1_score(y_true, y_pred, zero_division='warn')
+        prec_val = precision_score(y_true, y_pred, zero_division="warn")
+        rec_val = recall_score(y_true, y_pred, zero_division="warn")
+        f1_val = f1_score(y_true, y_pred, zero_division="warn")
         acc = accuracy_score(y_true, y_pred)
 
         # Create a binary label confusion matrix for each label
@@ -267,17 +262,14 @@ def _compute_labelwise_metrics_slice(
 def compute_metrics(
     all_labels: np.ndarray,
     all_probs: np.ndarray,
-    all_texts: np.ndarray,
+    all_texts: Sequence[str] | np.ndarray,
     thresholds: dict,
 ) -> dict:
     metrics = {}
 
     # Overall metrics
     overall_metrics = _compute_labelwise_metrics_slice(
-        labels=all_labels,
-        probs=all_probs,
-        thresholds=thresholds,
-        prefix="val_"
+        labels=all_labels, probs=all_probs, thresholds=thresholds, prefix="val_"
     )
     metrics.update(overall_metrics)
 
@@ -289,22 +281,16 @@ def compute_metrics(
     mask = build_group_masks(all_texts, LEXICAL_GROUPS)
 
     # Group slice
-    group_prefix = f"val_lex_group_"
+    group_prefix = "val_lex_group_"
     group_metrics = _compute_labelwise_metrics_slice(
-        labels=all_labels[mask],
-        probs=all_probs[mask],
-        thresholds=thresholds,
-        prefix=group_prefix
+        labels=all_labels[mask], probs=all_probs[mask], thresholds=thresholds, prefix=group_prefix
     )
     metrics.update(group_metrics)
 
     # Non-group slice
-    non_group_prefix = f"val_non_lex_group_"
+    non_group_prefix = "val_non_lex_group_"
     non_group_metrics = _compute_labelwise_metrics_slice(
-        labels=all_labels[~mask],
-        probs=all_probs[~mask],
-        thresholds=thresholds,
-        prefix=non_group_prefix
+        labels=all_labels[~mask], probs=all_probs[~mask], thresholds=thresholds, prefix=non_group_prefix
     )
     metrics.update(non_group_metrics)
 
@@ -312,7 +298,7 @@ def compute_metrics(
     for label_name in LABEL_COLS:
         g_fpr = group_metrics.get(f"{group_prefix}{label_name}_FPR")
         ng_fpr = non_group_metrics.get(f"{non_group_prefix}{label_name}_FPR")
-        g_tpr = group_metrics.get(f"{group_prefix}{label_name}_recall")   # recall == TPR
+        g_tpr = group_metrics.get(f"{group_prefix}{label_name}_recall")  # recall == TPR
         ng_tpr = non_group_metrics.get(f"{non_group_prefix}{label_name}_recall")
 
         if g_fpr is not None and ng_fpr is not None:
@@ -331,7 +317,8 @@ def main():
         torch.cuda.manual_seed_all(SEED)
 
     # MLflow setup
-    mlflow.set_tracking_uri(_settings.mlflow_tracking_uri)
+    if _settings.mlflow_tracking_uri is not None:
+        mlflow.set_tracking_uri(_settings.mlflow_tracking_uri)
     mlflow.set_experiment("text_toxicity_moderation")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -364,7 +351,7 @@ def main():
     ).to(device)
 
     optimizer = AdamW(model.parameters(), lr=LR)
-    grad_scaler = GradScaler(device, enabled=MIXED_PRECISION)
+    grad_scaler = GradScaler(device=device.type, enabled=MIXED_PRECISION)
 
     with mlflow.start_run():
         mlflow.log_params(
@@ -404,9 +391,7 @@ def main():
             json.dump(calibrated_thresholds, f)
 
         # Log calibrated thresholds to MLflow
-        mlflow.log_params(
-            {f"threshold_{k}": v for k, v in calibrated_thresholds.items()}
-        )
+        mlflow.log_params({f"threshold_{k}": v for k, v in calibrated_thresholds.items()})
 
         # Save model locally and to MLflow
         save_path = MODEL_DIR / "model"

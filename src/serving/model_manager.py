@@ -1,15 +1,13 @@
-from pathlib import Path
 import json
+from pathlib import Path
 
 import torch
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
-
-from src.serving.schemas import LabelResult, ModerationResult
-
+from src.serving.schemas import LabelResult
+from transformers import AutoModelForSequenceClassification, AutoTokenizer, PreTrainedModel, PreTrainedTokenizerBase
 
 # Module-level singleton
-_tokenizer = None
-_model = None
+_tokenizer: PreTrainedTokenizerBase | None = None
+_model: PreTrainedModel | None = None
 _model_path: str | None = None
 _device: str = "cpu"
 _thresholds: dict = {}
@@ -27,7 +25,7 @@ def load_model(model_path: str) -> None:
     else:
         print("Warning! The model and tokenizer are being loaded on the CPU.")
         device = "cpu"
-    
+
     # _label_cols = [_model.config.id2label[i] for i in range(_model.config.num_labels)]
     _tokenizer = AutoTokenizer.from_pretrained(model_path)
     _model = AutoModelForSequenceClassification.from_pretrained(model_path).to(device)
@@ -39,8 +37,7 @@ def load_model(model_path: str) -> None:
     thresholds_path = Path(_model_path).parent / "thresholds.json"
     with open(thresholds_path) as f:
         _thresholds = json.load(f)
-    
-    
+
 
 def is_loaded() -> bool:
     """Return True if the model is ready to serve."""
@@ -51,7 +48,10 @@ def predict(text: str) -> tuple[LabelResult, LabelResult]:
     """Run inference on a single text. Returns (toxicity, hate) LabelResults."""
     if not is_loaded():
         raise RuntimeError("Model is not loaded")
-    
+
+    assert _tokenizer is not None
+    assert _model is not None
+
     inputs = _tokenizer(
         text,
         padding=True,

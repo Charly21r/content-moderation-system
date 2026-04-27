@@ -1,18 +1,15 @@
 import json
 import logging
 from pathlib import Path
-from typing import Dict, Tuple
+
 import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, AutoConfig
+from transformers import AutoConfig, AutoModelForSequenceClassification, AutoTokenizer
 
 from config import get_settings
-from training.train_text_model import (
-    JigsawDataset,
-    compute_metrics
-)
+from training.train_text_model import JigsawDataset, compute_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +31,7 @@ MAX_LENGTH = _settings.model.max_length
 BATCH_SIZE = _settings.bias_eval.batch_size
 
 
-def load_thresholds(path: Path) -> Dict[str, float]:
+def load_thresholds(path: Path) -> dict[str, float]:
     if not path.exists():
         return {"toxicity": 0.5, "hate": 0.5}
     with path.open("r") as f:
@@ -64,9 +61,9 @@ def load_model_and_tokenizer(device: torch.device):
 def compute_identity_sensitivity(
     df: pd.DataFrame,
     probs: np.ndarray,  # shape (N, 2): [toxicity_prob, hate_prob]
-    thresholds: Dict[str, float],
+    thresholds: dict[str, float],
     pair_id_col: str = "pair_id",
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """
     Identity-agnostic counterfactual sensitivity on templated data.
 
@@ -83,7 +80,7 @@ def compute_identity_sensitivity(
     pair_ids = df[pair_id_col].to_numpy()
     unique_pairs = pd.unique(pair_ids)
 
-    out: Dict[str, float] = {"num_samples": int(len(df))}
+    out: dict[str, float] = {"num_samples": int(len(df))}
     for j, label in enumerate(["toxicity", "hate"]):
         t = float(thresholds.get(label, 0.5))
         pred = (probs[:, j] >= t).astype(int)
@@ -111,7 +108,7 @@ def predict_probs(
     model,
     dataloader: DataLoader,
     device: torch.device,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Returns:
       labels: (N, 2) float32
@@ -155,7 +152,6 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model, tokenizer = load_model_and_tokenizer(device)
 
-
     # Load data
     df_val = pd.read_csv(DATA_VAL_PATH)
     require_columns(df_val, ["text", "toxicity", "hate"], "val.csv")
@@ -165,14 +161,12 @@ def main():
     require_columns(df_temp, ["text", "pair_id"], "templated_lexical_bias.csv")
     df_temp["text"] = df_temp["text"].astype(str)
 
-
     # Build datasets / loaders
     val_ds = JigsawDataset(df_val, tokenizer, max_length=MAX_LENGTH)
     val_loader = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False)
 
     temp_ds = JigsawDataset(df_temp, tokenizer, max_length=MAX_LENGTH)
     temp_loader = DataLoader(temp_ds, batch_size=BATCH_SIZE, shuffle=False)
-
 
     # Predict on Val
     val_labels, val_probs = predict_probs(model, val_loader, device)

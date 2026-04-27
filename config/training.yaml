@@ -27,3 +27,5 @@ bias_eval:
   templated_data_path: "data/bias_eval/templated_lexical_bias.csv"
   batch_size: 32
   max_fpr_delta: 0.05
+
+mlflow_tracking_uri: "file:./mlruns"

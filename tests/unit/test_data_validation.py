@@ -4,8 +4,6 @@ These tests verify the structure and invariants of the data pipeline output.
 They run against fixtures (not real data files) to keep tests fast and self-contained.
 """
 
-import pandas as pd
-import pytest
 
 
 REQUIRED_COLS = ["text", "toxicity", "hate", "safe"]
@@ -26,9 +24,7 @@ class TestPreprocessedDataSchema:
         """safe should be 1 iff toxicity=0 AND hate=0."""
         for _, row in sample_df.iterrows():
             expected = int(row["toxicity"] == 0 and row["hate"] == 0)
-            assert row["safe"] == expected, (
-                f"safe={row['safe']} but toxicity={row['toxicity']}, hate={row['hate']}"
-            )
+            assert row["safe"] == expected, f"safe={row['safe']} but toxicity={row['toxicity']}, hate={row['hate']}"
 
     def test_no_null_text(self, sample_df):
         assert sample_df["text"].notna().all(), "Found null values in text column"

@@ -32,8 +32,7 @@ def setup_logging(
 
     if fmt == "json":
         formatter = logging.Formatter(
-            '{"time":"%(asctime)s","level":"%(levelname)s",'
-            '"logger":"%(name)s","message":"%(message)s"}'
+            '{"time":"%(asctime)s","level":"%(levelname)s","logger":"%(name)s","message":"%(message)s"}'
         )
     else:
         formatter = logging.Formatter(

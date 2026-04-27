@@ -1,5 +1,6 @@
 import logging
 from pathlib import Path
+
 import pandas as pd
 
 from utils.lexicon import load_group_terms
@@ -59,7 +60,7 @@ def main():
                     "hate": 1,
                 }
             )
-            pair_id +=1
+            pair_id += 1
 
     df = pd.DataFrame(rows)
     df.to_csv(OUTPUT_PATH, index=False)

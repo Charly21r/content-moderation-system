@@ -3,12 +3,11 @@
 import numpy as np
 import pandas as pd
 import torch
-import pytest
 
 from training.train_text_model import (
+    build_group_masks,
     calculate_pos_weights,
     find_optimal_thresholds,
-    build_group_masks,
 )
 
 
@@ -23,7 +22,7 @@ class TestCalculatePosWeights:
         assert abs(weights[1].item() - 1.0) < 0.01
 
     def test_imbalanced_dataset(self):
-        df = pd.DataFrame({"toxicity": [0]*9 + [1], "hate": [0]*8 + [1]*2})
+        df = pd.DataFrame({"toxicity": [0] * 9 + [1], "hate": [0] * 8 + [1] * 2})
         weights = calculate_pos_weights(df, ["toxicity", "hate"])
         # toxicity: 9 neg / 1 pos = 9.0
         assert abs(weights[0].item() - 9.0) < 0.01
