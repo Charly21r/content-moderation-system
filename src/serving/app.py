@@ -3,8 +3,14 @@ from contextlib import asynccontextmanager
 from time import perf_counter
 
 from fastapi import FastAPI
+from fastapi.responses import Response
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from src.serving.model_manager import get_model_info, is_loaded, load_model, predict
 from src.serving.schemas import ModerationResult, TextInput
+from src.serving.metrics import (
+    INFERENCE_LATENCY, MODEL_CONFIDENCE,
+    PREDICTION_DISTRIBUTION, REQUEST_COUNT, REQUEST_LATENCY,
+)
 
 
 @asynccontextmanager
@@ -29,19 +35,33 @@ def model_info():
 
 @app.post("/v1/moderate/text")
 def moderate(text: TextInput) -> ModerationResult:
-    content = text.content
+    with REQUEST_LATENCY.labels(endpoint='/v1/moderate/text').time():
+        start = perf_counter()
+        result = predict(text.content)
+        end = perf_counter()
+        processing_time_ms = end - start
+        INFERENCE_LATENCY.observe(processing_time_ms)
 
-    start = perf_counter()
-    result = predict(content)
-    end = perf_counter()
-    processing_time_ms = end - start
+        # Mark it as unsafe if any of the labels is flagged
+        safe = not (result[0].flagged or result[1].flagged)
 
-    # Mark it as unsafe if any of the labels is flagged
-    safe = not (result[0].flagged or result[1].flagged)
+        # Record prediction distribution
+        if result[0].flagged:
+            PREDICTION_DISTRIBUTION.labels(label="toxic").inc()
+        if result[1].flagged:
+            PREDICTION_DISTRIBUTION.labels(label="hate").inc()
+        if safe:
+            PREDICTION_DISTRIBUTION.labels(label="safe").inc()
+
+        # Record confidence scores
+        MODEL_CONFIDENCE.labels(label="toxicity").observe(result[0].prob)
+        MODEL_CONFIDENCE.labels(label="hate").observe(result[1].prob)
+    
+    REQUEST_COUNT.labels(endpoint="/v1/moderate/text", status_code="200").inc()
 
     output = ModerationResult(
         id=text.id,  # re-using the same id?
-        text=content,
+        text=text.content,
         toxicity=result[0],
         hate=result[1],
         safe=safe,
@@ -53,3 +73,9 @@ def moderate(text: TextInput) -> ModerationResult:
 
 # @app.post("/v1/moderate/text/batch")
 # TODO: implement
+
+@app.get("/metrics")
+def metrics():
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
