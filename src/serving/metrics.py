@@ -1,6 +1,5 @@
 from prometheus_client import Counter, Histogram
 
-
 REQUEST_COUNT = Counter(
     name="moderation_requests",
     documentation="Total HTTP requests",
