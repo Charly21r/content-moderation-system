@@ -20,8 +20,12 @@ async def lifespan(app):
     # Cleaning
 
 
-app = FastAPI(lifespan=lifespan)
-
+app = FastAPI(
+    title="Argus",
+    description="Multimodal content moderation - toxicity and hate-speech detection",
+    version="0.1.0",
+    lifespan=lifespan,
+)
 
 @app.get("/v1/health")
 def health():
@@ -71,11 +75,11 @@ def moderate(text: TextInput) -> ModerationResult:
     return output
 
 
-# @app.post("/v1/moderate/text/batch")
-# TODO: implement
-
 @app.get("/metrics")
 def metrics():
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
+
+# @app.post("/v1/moderate/text/batch")
+# TODO: implement
 
