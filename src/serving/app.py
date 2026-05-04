@@ -14,13 +14,14 @@ from src.serving.metrics import (
 )
 from src.serving.model_manager import get_model_info, is_loaded, load_model, predict
 from src.serving.schemas import ModerationResult, TextInput
+from src.serving.tracing import setup_tracing, tracer
 
 
 @asynccontextmanager
 async def lifespan(app):
+    setup_tracing()
     load_model(os.getenv("MODEL_PATH", "models/text_toxicity/artifacts/model"))
     yield
-    # Cleaning
 
 
 app = FastAPI(
@@ -42,40 +43,43 @@ def model_info():
 
 @app.post("/v1/moderate/text")
 def moderate(text: TextInput) -> ModerationResult:
-    with REQUEST_LATENCY.labels(endpoint='/v1/moderate/text').time():
-        start = perf_counter()
-        result = predict(text.content)
-        end = perf_counter()
-        processing_time_ms = end - start
-        INFERENCE_LATENCY.observe(processing_time_ms)
+    with tracer.start_as_current_span("moderate_text") as span:
+        span.set_attribute("input.length", len(text.content))
 
-        # Mark it as unsafe if any of the labels is flagged
-        safe = not (result[0].flagged or result[1].flagged)
+        with REQUEST_LATENCY.labels(endpoint="/v1/moderate/text").time():
+            with tracer.start_as_current_span("model_inference"):
+                start = perf_counter()
+                result = predict(text.content)
+                processing_time_ms = perf_counter() - start
+                INFERENCE_LATENCY.observe(processing_time_ms)
 
-        # Record prediction distribution
-        if result[0].flagged:
-            PREDICTION_DISTRIBUTION.labels(label="toxic").inc()
-        if result[1].flagged:
-            PREDICTION_DISTRIBUTION.labels(label="hate").inc()
-        if safe:
-            PREDICTION_DISTRIBUTION.labels(label="safe").inc()
+            safe = not (result[0].flagged or result[1].flagged)
 
-        # Record confidence scores
-        MODEL_CONFIDENCE.labels(label="toxicity").observe(result[0].prob)
-        MODEL_CONFIDENCE.labels(label="hate").observe(result[1].prob)
+            with tracer.start_as_current_span("post_processing"):
+                if result[0].flagged:
+                    PREDICTION_DISTRIBUTION.labels(label="toxic").inc()
+                if result[1].flagged:
+                    PREDICTION_DISTRIBUTION.labels(label="hate").inc()
+                if safe:
+                    PREDICTION_DISTRIBUTION.labels(label="safe").inc()
+
+                MODEL_CONFIDENCE.labels(label="toxicity").observe(result[0].prob)
+                MODEL_CONFIDENCE.labels(label="hate").observe(result[1].prob)
+
+        span.set_attribute("result.safe", safe)
+        span.set_attribute("result.toxicity_score", result[0].prob)
+        span.set_attribute("result.hate_score", result[1].prob)
 
     REQUEST_COUNT.labels(endpoint="/v1/moderate/text", status_code="200").inc()
 
-    output = ModerationResult(
-        id=text.id,  # re-using the same id?
+    return ModerationResult(
+        id=text.id,
         text=text.content,
         toxicity=result[0],
         hate=result[1],
         safe=safe,
         processing_time_ms=processing_time_ms,
     )
-
-    return output
 
 
 @app.get("/metrics")

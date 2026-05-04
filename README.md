@@ -1,3 +1,5 @@
+<div align="center">
+
 <img src="assets/argus_logo.svg" alt="Argus" width="520"/>
 
 [![CI](https://github.com/Charly21r/content-moderation-system/actions/workflows/ci.yaml/badge.svg)](https://github.com/Charly21r/content-moderation-system/actions/workflows/ci.yaml)
@@ -5,9 +7,11 @@
 ![Python](https://img.shields.io/badge/python-3.11-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-# Argus
+</div>
 
-Production-grade, multimodal content moderation system for real-time toxicity and hate-speech detection — with built-in fairness enforcement.
+---
+
+Argus is a production-ready content moderation API that detects toxicity and hate speech in real time, with bias mitigation and fairness constraints enforced across the full ML pipeline.
 
 ---
 
