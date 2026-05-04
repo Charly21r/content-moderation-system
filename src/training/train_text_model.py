@@ -324,8 +324,8 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Load data
-    train_df = pd.read_csv(DATA_DIR / "train.csv")[:10]
-    val_df = pd.read_csv(DATA_DIR / "val.csv")[:10]
+    train_df = pd.read_csv(DATA_DIR / "train.csv")
+    val_df = pd.read_csv(DATA_DIR / "val.csv")
 
     # Calculate the weights to handle imbalance and use them in the loss
     pos_weights = calculate_pos_weights(train_df, LABEL_COLS).to(device)
